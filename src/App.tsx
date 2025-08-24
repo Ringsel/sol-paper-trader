@@ -562,37 +562,80 @@ function SummaryCard({ label, value, icon, clickable, onClick }: { label: string
       <div className="p-1 rounded-lg bg-slate-800">{icon}</div>
       <div>
         <div className="text-slate-400">{label}</div>
-        <div className="font-semibold">{value}</div>
+        <div className="font-semibold whitespace-normal break-words leading-snug">
+  {value}
+</div>
       </div>
     </div>
   );
 }
 
-function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: { entry: Entry; onEdit: () => void; onSell: () => void; onPreview: () => void; onBuyMore: () => void; onEditMcap: () => void }) {
+function EntryCard({
+  entry,
+  onEdit,
+  onSell,
+  onPreview,
+  onBuyMore,
+  onEditMcap,
+}: {
+  entry: Entry;
+  onEdit: () => void;
+  onSell: () => void;
+  onPreview: () => void;
+  onBuyMore: () => void;
+  onEditMcap: () => void;
+}) {
   const sold = entry.status === "sold";
-  const pnlColor = sold ? ((entry.pnl ?? 0) > 0 ? "text-green-400" : (entry.pnl ?? 0) < 0 ? "text-red-400" : "") : "";
+  const pnlColor = sold
+    ? (entry.pnl ?? 0) > 0
+      ? "text-green-400"
+      : (entry.pnl ?? 0) < 0
+      ? "text-red-400"
+      : ""
+    : "";
 
+  // Current MCAP
   const hasCurrent = isFinite(entry.currentMarketCap ?? NaN);
-  const curMcap = hasCurrent ? (entry.currentMarketCap as number) : entry.entryMarketCap;
-  const changePct = ((curMcap - entry.entryMarketCap) / entry.entryMarketCap) * 100;
-   // Value-based view for Open Invested
-  const baseSOL = entry.solInvested; // base units
+  const curMcap = hasCurrent
+    ? (entry.currentMarketCap as number)
+    : entry.entryMarketCap;
+  const changePct =
+    ((curMcap - entry.entryMarketCap) / entry.entryMarketCap) * 100;
+  const changeColor =
+    changePct > 0
+      ? "text-green-400"
+      : changePct < 0
+      ? "text-red-400"
+      : "text-slate-300";
+
+  // 📊 Open Invested (value, delta, %)
+  const baseSOL = entry.solInvested;
   const multiplierNow = curMcap / entry.entryMarketCap;
-  const valueNowSOL = baseSOL * multiplierNow;        // what you can sell NOW (in SOL)
-  const deltaAbsSOL = valueNowSOL - baseSOL;          // absolute change in SOL
-  const deltaPct = (multiplierNow - 1) * 100;         // % change since entry
+  const valueNowSOL = baseSOL * multiplierNow; // what it's worth now
+  const deltaAbsSOL = valueNowSOL - baseSOL;
+  const deltaPct = (multiplierNow - 1) * 100;
   const deltaClr = deltaAbsSOL >= 0 ? "text-green-400" : "text-red-400";
-  const signAbs = deltaAbsSOL >= 0 ? "+" : "";        // show + for positive
+  const signAbs = deltaAbsSOL >= 0 ? "+" : "";
   const signPct = deltaPct >= 0 ? "+" : "";
-  const changeColor = changePct > 0 ? "text-green-400" : changePct < 0 ? "text-red-400" : "text-slate-300";
 
   return (
-    <div className={"rounded-2xl border p-4 transition shadow-sm " + (sold ? "bg-slate-900/40 border-slate-900 text-slate-400" : "bg-slate-900/70 border-slate-800") }>
+    <div
+      className={
+        "rounded-2xl border p-4 transition shadow-sm " +
+        (sold
+          ? "bg-slate-900/40 border-slate-900 text-slate-400"
+          : "bg-slate-900/70 border-slate-800")
+      }
+    >
       <div className="flex items-center justify-between">
         <div className="font-semibold text-lg truncate">{entry.name}</div>
         <div className="flex items-center gap-2">
           {sold && (
-            <button onClick={onPreview} className="p-2 rounded-lg hover:bg-slate-800 transition-transform duration-150 hover:-translate-y-0.5" title="Export image">
+            <button
+              onClick={onPreview}
+              className="p-2 rounded-lg hover:bg-slate-800 transition-transform duration-150 hover:-translate-y-0.5"
+              title="Export image"
+            >
               <ExternalLink className="w-4 h-4" />
             </button>
           )}
@@ -604,53 +647,108 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: 
       <div className="mt-2 flex items-end justify-between">
         <div>
           <div className="text-xs text-slate-400">Current Market Cap</div>
-          <div className="text-2xl font-extrabold tracking-tight">{fmtNum(curMcap)}</div>
-          <div className={`text-xs ${changeColor}`}>{changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}% since entry</div>
+          <div className="text-2xl font-extrabold tracking-tight">
+            {fmtNum(curMcap)}
+          </div>
+          <div className={`text-xs ${changeColor}`}>
+            {changePct >= 0 ? "+" : ""}
+            {changePct.toFixed(2)}% since entry
+          </div>
         </div>
         {!sold && (
-          <button onClick={onEditMcap} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">
+          <button
+            onClick={onEditMcap}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"
+          >
             <Pencil className="w-4 h-4" /> Edit
           </button>
         )}
       </div>
 
+      {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
         <KV label="Avg Entry Mcap" value={fmtNum(entry.entryMarketCap)} />
-        <KV
-  label="Open Invested"
-  value={
-    <span>
-      {fmt4(valueNowSOL)}{" "}
-      <span className={deltaClr}>
-        ({signAbs}{fmt4(Math.abs(deltaAbsSOL))}) ({signPct}{deltaPct.toFixed(2)}%)
-      </span>
-    </span>
-  }
-/>
+
+        {/* ✅ Open Invested with value + delta */}
+        <div className="col-span-2 md:col-span-2">
+          <KV
+            label="Open Invested"
+            value={
+              <span>
+                {valueNowSOL.toFixed(4)}{" "}
+                <span className={deltaClr}>
+                  ({signAbs}
+                  {Math.abs(deltaAbsSOL).toFixed(4)}) ({signPct}
+                  {deltaPct.toFixed(2)}%)
+                </span>
+              </span>
+            }
+          />
+        </div>
+
         {sold ? (
           <>
             <KV label="Last Sell Mcap" value={fmtNum(entry.sellMarketCap ?? 0)} />
-            <KV label="Returned (total)" value={fmtSOL(entry.solReturned ?? 0)} />
-            <KV label="% (total)" value={<span className={pnlColor}>{(entry.pnlPercent ?? 0).toFixed(2)}%</span>} />
-            <KV label="P/L (total)" value={<span className={pnlColor}>{fmtSOL(entry.pnl ?? 0)}</span>} />
-            <KV label="Sold" value={entry.soldAt ? new Date(entry.soldAt).toLocaleString() : ""} />
+            <KV
+              label="Returned (total)"
+              value={fmtSOL(entry.solReturned ?? 0)}
+            />
+            <KV
+              label="% (total)"
+              value={
+                <span className={pnlColor}>
+                  {(entry.pnlPercent ?? 0).toFixed(2)}%
+                </span>
+              }
+            />
+            <KV
+              label="P/L (total)"
+              value={
+                <span className={pnlColor}>{fmtSOL(entry.pnl ?? 0)}</span>
+              }
+            />
+            <KV
+              label="Sold"
+              value={entry.soldAt ? new Date(entry.soldAt).toLocaleString() : ""}
+            />
           </>
         ) : (
           <>
             <KV label="Realized P/L" value={fmtSOL(entry.realizedPnl ?? 0)} />
-            <KV label="Buys (SOL)" value={fmtSOL(entry.cumulativeBuySOL ?? entry.solInvested)} />
+            <KV
+              label="Buys (SOL)"
+              value={fmtSOL(entry.cumulativeBuySOL ?? entry.solInvested)}
+            />
           </>
         )}
       </div>
 
+      {/* Buttons */}
       <div className="mt-4 flex flex-wrap gap-2">
         {sold ? (
-          <span className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">Sold • locked</span>
+          <span className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">
+            Sold • locked
+          </span>
         ) : (
           <>
-            <button onClick={onBuyMore} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">Buy More</button>
-            <button onClick={onSell} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">Sell</button>
-            <button onClick={onEdit} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"><Pencil className="w-4 h-4" /> Edit</button>
+            <button
+              onClick={onBuyMore}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium"
+            >
+              Buy More
+            </button>
+            <button
+              onClick={onSell}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium"
+            >
+              Sell
+            </button>
+            <button
+              onClick={onEdit}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"
+            >
+              <Pencil className="w-4 h-4" /> Edit
+            </button>
           </>
         )}
       </div>
@@ -658,11 +756,14 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: 
   );
 }
 
+
 function KV({ label, value }: { label: string; value: any }) {
   return (
     <div className="bg-slate-950/40 rounded-xl border border-slate-800 p-3">
       <div className="text-xs text-slate-400">{label}</div>
-      <div className="font-medium truncate" title={typeof value === 'string' ? value : undefined}>{value}</div>
+      <div className="font-medium whitespace-normal break-words leading-snug">
+        {value}
+      </div>
     </div>
   );
 }
