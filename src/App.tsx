@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Plus,
   Wallet,
@@ -18,6 +18,14 @@ import html2canvas from "html2canvas";
 // ────────────────────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = "sol-paper-trading-state-v1";
+
+function saveState(state: AppState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
 
 type Entry = {
   id: string;
@@ -43,7 +51,24 @@ type AppState = {
 
 // IMPORTANT: No persistence (resets on refresh/reopen)
 function loadState(): AppState {
-  return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+    const parsed = JSON.parse(raw);
+    // minimal shape check
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof parsed.balance !== "number" ||
+      !Array.isArray(parsed.entries) ||
+      typeof parsed.nextId !== "number"
+    ) {
+      return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+    }
+    return parsed as AppState;
+  } catch {
+    return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+  }
 }
 
 function fmtSOL(n: number) {
@@ -75,6 +100,10 @@ export default function App() {
   const openEntries = useMemo(() => state.entries.filter(e => e.status === "open"), [state.entries]);
   const soldEntries = useMemo(() => state.entries.filter(e => e.status === "sold"), [state.entries]);
 
+    useEffect(() => {
+    saveState(state);
+  }, [state]);
+  
   const totals = useMemo(() => {
     const investedOpen = openEntries.reduce((s, e) => s + e.solInvested, 0);
     const realized = soldEntries.reduce((s, e) => s + (e.pnl ?? 0), 0);
@@ -178,9 +207,10 @@ export default function App() {
     });
   }
 
-  function resetAll() {
-    setState({ startingBalance: null, balance: 0, entries: [], nextId: 1 });
-  }
+function resetAll() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  setState({ startingBalance: null, balance: 0, entries: [], nextId: 1 });
+}
 
   // ── Forms state ───────────────────────────────────────────────────────────
   const [formNew, setFormNew] = useState({ name: "", entryMarketCap: "", solInvested: "" });
