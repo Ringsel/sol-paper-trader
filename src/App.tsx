@@ -93,7 +93,11 @@ export default function App() {
   const soldEntries = useMemo(() => state.entries.filter(e => e.status === "sold"), [state.entries]);
 
   const totals = useMemo(() => {
-    const investedOpen = openEntries.reduce((s, e) => s + e.solInvested, 0);
+    const investedOpen = openEntries.reduce((s, e) => {
+      const cur = (e.currentMarketCap ?? e.entryMarketCap);
+      const mult = cur > 0 ? cur / e.entryMarketCap : 1;
+      return s + e.solInvested * mult;
+    }, 0);
     const realized = soldEntries.reduce((s, e) => s + (e.pnl ?? 0), 0);
     return { investedOpen, realized };
   }, [openEntries, soldEntries]);
@@ -556,7 +560,7 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: 
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
         <KV label="Avg Entry Mcap" value={fmtNum(entry.entryMarketCap)} />
-        <KV label="Open Invested" value={fmtSOL(entry.solInvested)} />
+        <KV label="Open Invested" value={fmtSOL(entry.solInvested * (( (isFinite(entry.currentMarketCap ?? NaN) ? (entry.currentMarketCap as number) : entry.entryMarketCap) ) / entry.entryMarketCap))} />
         {sold ? (
           <>
             <KV label="Last Sell Mcap" value={fmtNum(entry.sellMarketCap ?? 0)} />
