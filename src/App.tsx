@@ -21,6 +21,7 @@ type Entry = {
   id: string;
   name: string;
   entryMarketCap: number; // weighted average mcap while open; fixed at close
+  currentMarketCap?: number; // latest mcap the user set (displayed under name)
   solInvested: number; // current open SOL invested
   status: "open" | "sold";
   // DCA tracking
@@ -82,6 +83,11 @@ export default function App() {
   const [buyMoreId, setBuyMoreId] = useState<string | null>(null);
   const [previewEntry, setPreviewEntry] = useState<Entry | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [showActiveOnly, setShowActiveOnly] = useState(false);
+  const [balanceModalOpen, setBalanceModalOpen] = useState(false);
+  const [balanceDelta, setBalanceDelta] = useState<string>("");
+  const [mcapEditId, setMcapEditId] = useState<string | null>(null);
+  const [mcapEditValue, setMcapEditValue] = useState<string>("");
 
   const openEntries = useMemo(() => state.entries.filter(e => e.status === "open"), [state.entries]);
   const soldEntries = useMemo(() => state.entries.filter(e => e.status === "sold"), [state.entries]);
@@ -91,6 +97,21 @@ export default function App() {
     const realized = soldEntries.reduce((s, e) => s + (e.pnl ?? 0), 0);
     return { investedOpen, realized };
   }, [openEntries, soldEntries]);
+
+  // Win rate (classic: per closed trade)
+  const winStats = useMemo(() => {
+    const closed = soldEntries.length;
+    const wins = soldEntries.filter(e => (e.pnl ?? 0) > 0).length;
+    const losses = closed - wins;
+    const winRate = closed > 0 ? (wins / closed) * 100 : 0;
+    return { closed, wins, losses, winRate };
+  }, [soldEntries]);
+
+  // Entries to render (with hide old toggle)
+  const entriesForList = useMemo(() => {
+    const list = showActiveOnly ? state.entries.filter(e => e.status === 'open') : state.entries;
+    return list;
+  }, [state.entries, showActiveOnly]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   function setStartingBalance(n: number) {
@@ -104,6 +125,7 @@ export default function App() {
         id: String(s.nextId),
         name: data.name.trim() || `Entry #${s.nextId}`,
         entryMarketCap: data.entryMarketCap,
+        currentMarketCap: data.entryMarketCap,
         solInvested: data.solInvested,
         status: "open",
         cumulativeBuySOL: data.solInvested,
@@ -116,6 +138,16 @@ export default function App() {
     setShowNew(false);
   }
 
+  function updateCurrentMcap(id: string, mcap: number) {
+    setState(s => {
+      const idx = s.entries.findIndex(e => e.id === id); if (idx === -1) return s;
+      const e = s.entries[idx];
+      const updated: Entry = { ...e, currentMarketCap: mcap };
+      const entries = [...s.entries]; entries[idx] = updated;
+      return { ...s, entries };
+    });
+  }
+
   function editEntry(id: string, updates: Partial<Pick<Entry, "name" | "entryMarketCap" | "solInvested">>) {
     setState(s => {
       const idx = s.entries.findIndex(e => e.id === id); if (idx === -1) return s;
@@ -123,7 +155,10 @@ export default function App() {
       let newBalance = s.balance;
       const updated: Entry = { ...e };
       if (typeof updates.name === "string") updated.name = updates.name;
-      if (typeof updates.entryMarketCap === "number" && isFinitePos(updates.entryMarketCap)) updated.entryMarketCap = updates.entryMarketCap;
+      if (typeof updates.entryMarketCap === "number" && isFinitePos(updates.entryMarketCap)) {
+        updated.entryMarketCap = updates.entryMarketCap;
+        // when editing avg entry, do not change current mcap automatically
+      }
       if (typeof updates.solInvested === "number" && isFinite(updates.solInvested)) {
         const delta = updates.solInvested - e.solInvested;
         if (delta > 0 && s.balance < delta) { alert("Insufficient balance to increase position size."); return s; }
@@ -147,6 +182,7 @@ export default function App() {
       const updated: Entry = {
         ...e,
         entryMarketCap: newAvg,
+        currentMarketCap: currentMcap,
         solInvested: curInv + buyAmountSOL,
         cumulativeBuySOL: (e.cumulativeBuySOL ?? 0) + buyAmountSOL,
       };
@@ -169,6 +205,7 @@ export default function App() {
 
       let updated: Entry = {
         ...e,
+        currentMarketCap: sellMcap,
         solInvested: remaining,
         realizedPnl: (e.realizedPnl ?? 0) + realized,
         cumulativeSellAmount: (e.cumulativeSellAmount ?? 0) + sellAmountSOL,
@@ -195,6 +232,16 @@ export default function App() {
       return { ...s, balance: s.balance + returned, entries };
     });
     setSellingId(null);
+  }
+
+  function adjustBalance(delta: number) {
+    setState(s => {
+      const next = s.balance + delta;
+      if (next < 0) { alert("Balance cannot go below 0."); return s; }
+      return { ...s, balance: next };
+    });
+    setBalanceDelta("");
+    setBalanceModalOpen(false);
   }
 
   function resetAll() {
@@ -240,37 +287,48 @@ export default function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <SummaryCard label="Balance" value={fmtSOL(state.balance)} icon={<Wallet className="w-4 h-4" />} />
+            <SummaryCard
+              label="Balance"
+              value={fmtSOL(state.balance)}
+              icon={<Wallet className="w-4 h-4" />}
+              clickable
+              onClick={() => setBalanceModalOpen(true)}
+            />
             <SummaryCard label="Open Invested" value={fmtSOL(totals.investedOpen)} icon={<DollarSign className="w-4 h-4" />} />
             <SummaryCard label="Realized P/L" value={fmtSOL(totals.realized)} icon={<DollarSign className="w-4 h-4" />} />
+            <SummaryCard label="Win Rate" value={`${winStats.winRate.toFixed(1)}% (${winStats.wins}/${winStats.closed})`} icon={<DollarSign className="w-4 h-4" />} />
           </div>
         </div>
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => { setFormNew({ name: "", entryMarketCap: "", solInvested: "" }); setShowNew(true); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition font-medium shadow">
+          <button onClick={() => { setFormNew({ name: "", entryMarketCap: "", solInvested: "" }); setShowNew(true); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 hover:brightness-110 font-medium shadow">
             <Plus className="w-4 h-4" /> New Entry
           </button>
-          <button onClick={() => setConfirmReset(true)} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200">
+          <button onClick={() => setConfirmReset(true)} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 transition-transform duration-150 hover:-translate-y-0.5 border border-slate-700 text-slate-200">
             <RotateCcw className="w-4 h-4" /> Reset
+          </button>
+          <button onClick={() => setShowActiveOnly(v => !v)} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border transition-transform duration-150 hover:-translate-y-0.5  " style={{ borderColor: showActiveOnly ? "#22c55e" : "#334155", background: showActiveOnly ? "#052e16" : "#0f172a" }}>
+            {showActiveOnly ? "Showing Active Only" : "Show Active Only"}
           </button>
         </div>
 
         {/* Entries List */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {state.entries.length === 0 ? (
+          {entriesForList.length === 0 ? (
             <div className="col-span-full text-center text-slate-400 border border-dashed border-slate-800 rounded-2xl p-10">
-              No entries yet. Click <span className="font-semibold">New Entry</span> to buy your first position.
+              {showActiveOnly ? "No active positions." : "No entries yet. Click New Entry to buy your first position."}
             </div>
           ) : (
-            state.entries.map((e) => (
+            entriesForList.map((e) => (
               <EntryCard
                 key={e.id}
                 entry={e}
                 onEdit={() => { setEditingId(e.id); setFormEdit({ name: e.name, entryMarketCap: String(e.entryMarketCap), solInvested: String(e.solInvested), }); }}
-                onSell={() => { setSellingId(e.id); setFormSell({ sellMarketCap: e.sellMarketCap ? String(e.sellMarketCap) : "", sellAmount: "" }); }}
-                onBuyMore={() => { setBuyMoreId(e.id); setFormBuyMore({ currentMcap: "", buyAmount: "" }); }}
+                onSell={() => { setSellingId(e.id); setFormSell({ sellMarketCap: e.currentMarketCap ? String(e.currentMarketCap) : e.sellMarketCap ? String(e.sellMarketCap) : "", sellAmount: "" }); }}
+                onBuyMore={() => { setBuyMoreId(e.id); setFormBuyMore({ currentMcap: e.currentMarketCap ? String(e.currentMarketCap) : "", buyAmount: "" }); }}
                 onPreview={() => setPreviewEntry(e)}
+                onEditMcap={() => { setMcapEditId(e.id); setMcapEditValue(String(e.currentMarketCap ?? e.entryMarketCap)); }}
               />
             ))
           )}
@@ -332,13 +390,13 @@ export default function App() {
             {/* Preview new average */}
             <AvgPreview entry={state.entries.find(e => e.id === buyMoreId)!} mcap={Number(formBuyMore.currentMcap)} amount={Number(formBuyMore.buyAmount)} />
             <div className="flex items-center justify-end gap-2">
-              <button onClick={() => setBuyMoreId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700">Cancel</button>
+              <button onClick={() => setBuyMoreId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
               <button onClick={() => {
                 const m = Number(formBuyMore.currentMcap); const a = Number(formBuyMore.buyAmount);
                 if (!isFinitePos(m)) return alert("Current market cap must be a positive number.");
                 if (!isFinitePos(a)) return alert("Buy amount must be a positive number.");
                 buyMore(buyMoreId!, m, a);
-              }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-medium">
+              }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
                 <Save className="w-4 h-4" /> Confirm Buy
               </button>
             </div>
@@ -358,19 +416,66 @@ export default function App() {
               <label className="block">
                 <span className="text-sm text-slate-300">Sell Amount (SOL)</span>
                 <input inputMode="decimal" className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder={`max ${entry.solInvested.toFixed(4)}`} value={formSell.sellAmount} onChange={(e) => setFormSell({ ...formSell, sellAmount: e.target.value })} />
+                <div className="text-xs text-slate-400 mt-1">Max: {entry.solInvested.toFixed(4)} SOL</div>
               </label>
               {/* Preview sell return */}
               <SellPreview entry={entry} mcap={Number(formSell.sellMarketCap)} amount={Number(formSell.sellAmount)} />
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <button onClick={() => setFormSell(fs => ({ ...fs, sellAmount: String(entry.solInvested) }))} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700" title="Auto-fill full amount">Sell All</button>
-                <button onClick={() => setSellingId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700">Cancel</button>
+                <button onClick={() => setFormSell(fs => ({ ...fs, sellAmount: String(entry.solInvested) }))} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5" title="Auto-fill full amount">Sell All</button>
+                <button onClick={() => setSellingId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
                 <button onClick={() => {
                   const m = Number(formSell.sellMarketCap); const a = Number(formSell.sellAmount);
                   if (!isFinitePos(m)) return alert("Market cap must be a positive number.");
                   if (!isFinitePos(a)) return alert("Sell amount must be a positive number.");
+                  // also update the card's current mcap display
+                  updateCurrentMcap(sellingId!, m);
                   partialSell(sellingId!, m, a);
-                }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-medium">
+                }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
                   <Save className="w-4 h-4" /> Confirm Sell
+                </button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {balanceModalOpen && (
+        <Modal onClose={() => setBalanceModalOpen(false)} title="Adjust Balance">
+          <div className="space-y-4">
+            <label className="block">
+              <span className="text-sm text-slate-300">Add/Remove (SOL)</span>
+              <input inputMode="decimal" className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 1 (add) or -0.5 (remove)" value={balanceDelta} onChange={(e) => setBalanceDelta(e.target.value)} />
+            </label>
+            <div className="text-xs text-slate-400">Current: {fmtSOL(state.balance)}</div>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={() => setBalanceModalOpen(false)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
+              <button onClick={() => { const d = Number(balanceDelta); if (!isFinite(d)) return alert("Enter a valid number."); adjustBalance(d); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
+                <Save className="w-4 h-4" /> Apply
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {mcapEditId && (() => {
+        const entry = state.entries.find(e => e.id === mcapEditId)!;
+        return (
+          <Modal onClose={() => setMcapEditId(null)} title={`Update Market Cap • ${entry.name}`}>
+            <div className="space-y-4">
+              <label className="block">
+                <span className="text-sm text-slate-300">Current Market Cap</span>
+                <input
+                  inputMode="decimal"
+                  className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="e.g., 20000"
+                  value={mcapEditValue}
+                  onChange={(e) => setMcapEditValue(e.target.value)}
+                />
+              </label>
+              <div className="flex items-center justify-end gap-2">
+                <button onClick={() => setMcapEditId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
+                <button onClick={() => { const n = Number(mcapEditValue); if (!isFinitePos(n)) return alert("Enter a positive number."); updateCurrentMcap(mcapEditId!, n); setMcapEditId(null); }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
+                  <Save className="w-4 h-4" /> Save
                 </button>
               </div>
             </div>
@@ -386,8 +491,8 @@ export default function App() {
         <Modal onClose={() => setConfirmReset(false)} title="Reset All Data?">
           <p className="text-slate-300 mb-4">Clears balance, entries, and starting balance. Also removes saved session.</p>
           <div className="flex items-center justify-end gap-2">
-            <button onClick={() => setConfirmReset(false)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700">Cancel</button>
-            <button onClick={resetAll} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 font-medium">Reset</button>
+            <button onClick={() => setConfirmReset(false)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
+            <button onClick={resetAll} className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">Reset</button>
           </div>
         </Modal>
       )}
@@ -399,9 +504,10 @@ export default function App() {
 // UI Bits
 // ────────────────────────────────────────────────────────────────────────────────
 
-function SummaryCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
+function SummaryCard({ label, value, icon, clickable, onClick }: { label: string; value: string; icon: React.ReactNode; clickable?: boolean; onClick?: () => void }) {
+  const cls = "px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-sm flex items-center gap-2 " + (clickable ? "cursor-pointer transition-transform duration-150 hover:-translate-y-0.5 hover:brightness-110" : "");
   return (
-    <div className="px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-sm flex items-center gap-2">
+    <div className={cls} onClick={onClick} title={clickable ? "Click to edit" : undefined}>
       <div className="p-1 rounded-lg bg-slate-800">{icon}</div>
       <div>
         <div className="text-slate-400">{label}</div>
@@ -411,9 +517,14 @@ function SummaryCard({ label, value, icon }: { label: string; value: string; ico
   );
 }
 
-function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore }: { entry: Entry; onEdit: () => void; onSell: () => void; onPreview: () => void; onBuyMore: () => void }) {
+function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: { entry: Entry; onEdit: () => void; onSell: () => void; onPreview: () => void; onBuyMore: () => void; onEditMcap: () => void }) {
   const sold = entry.status === "sold";
   const pnlColor = sold ? ((entry.pnl ?? 0) > 0 ? "text-green-400" : (entry.pnl ?? 0) < 0 ? "text-red-400" : "") : "";
+
+  const hasCurrent = isFinite(entry.currentMarketCap ?? NaN);
+  const curMcap = hasCurrent ? (entry.currentMarketCap as number) : entry.entryMarketCap;
+  const changePct = ((curMcap - entry.entryMarketCap) / entry.entryMarketCap) * 100;
+  const changeColor = changePct > 0 ? "text-green-400" : changePct < 0 ? "text-red-400" : "text-slate-300";
 
   return (
     <div className={"rounded-2xl border p-4 transition shadow-sm " + (sold ? "bg-slate-900/40 border-slate-900 text-slate-400" : "bg-slate-900/70 border-slate-800") }>
@@ -421,12 +532,26 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore }: { entry: Ent
         <div className="font-semibold text-lg truncate">{entry.name}</div>
         <div className="flex items-center gap-2">
           {sold && (
-            <button onClick={onPreview} className="p-2 rounded-lg hover:bg-slate-800" title="Export image">
+            <button onClick={onPreview} className="p-2 rounded-lg hover:bg-slate-800 transition-transform duration-150 hover:-translate-y-0.5" title="Export image">
               <ExternalLink className="w-4 h-4" />
             </button>
           )}
           <div className="text-xs text-slate-400">#{entry.id}</div>
         </div>
+      </div>
+
+      {/* Big current MCAP row */}
+      <div className="mt-2 flex items-end justify-between">
+        <div>
+          <div className="text-xs text-slate-400">Current Market Cap</div>
+          <div className="text-2xl font-extrabold tracking-tight">{fmtNum(curMcap)}</div>
+          <div className={`text-xs ${changeColor}`}>{changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}% since entry</div>
+        </div>
+        {!sold && (
+          <button onClick={onEditMcap} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">
+            <Pencil className="w-4 h-4" /> Edit
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
@@ -453,9 +578,9 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore }: { entry: Ent
           <span className="px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-300">Sold • locked</span>
         ) : (
           <>
-            <button onClick={onBuyMore} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-medium">Buy More</button>
-            <button onClick={onSell} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-medium">Sell</button>
-            <button onClick={onEdit} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700"><Pencil className="w-4 h-4" /> Edit</button>
+            <button onClick={onBuyMore} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">Buy More</button>
+            <button onClick={onSell} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">Sell</button>
+            <button onClick={onEdit} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"><Pencil className="w-4 h-4" /> Edit</button>
           </>
         )}
       </div>
@@ -479,7 +604,7 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
       <div className="relative w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800" title="Close">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-800 transition-transform duration-150 hover:-translate-y-0.5" title="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -506,7 +631,7 @@ function EntryForm({ mode, balance, values, onChange, onSubmit }: { mode: "new" 
         </label>
       </div>
       <div className="flex items-center justify-end gap-2">
-        <button className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700" onClick={onSubmit} disabled={!canAfford}>
+        <button className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5" onClick={onSubmit} disabled={!canAfford}>
           {mode === "new" ? "Add Entry / Buy" : "Save Changes"}
         </button>
       </div>
@@ -521,7 +646,7 @@ function StartingBalanceForm({ onSet }: { onSet: (n: number) => void }) {
       <label className="block"><span className="text-sm text-slate-300">Starting SOL</span>
         <input inputMode="decimal" className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 10" value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { const n = Number(v); if (!isFinitePos(n)) return alert("Please enter a positive number."); onSet(n); } }} />
       </label>
-      <button onClick={() => { const n = Number(v); if (!isFinitePos(n)) return alert("Please enter a positive number."); onSet(n); }} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-medium">
+      <button onClick={() => { const n = Number(v); if (!isFinitePos(n)) return alert("Please enter a positive number."); onSet(n); }} className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
         <Save className="w-4 h-4" /> Save & Start
       </button>
     </div>
@@ -573,7 +698,7 @@ function ExportPreview({ entry, onClose }: { entry: Entry; onClose: () => void }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="relative bg-slate-950 p-6 rounded-2xl max-w-md w-full border border-slate-800">
-        <button onClick={onClose} className="absolute top-3 right-3 p-2 hover:bg-slate-800 rounded" title="Close">
+        <button onClick={onClose} className="absolute top-3 right-3 p-2 hover:bg-slate-800 rounded transition-transform duration-150 hover:-translate-y-0.5" title="Close">
           <X />
         </button>
 
@@ -598,7 +723,7 @@ function ExportPreview({ entry, onClose }: { entry: Entry; onClose: () => void }
           </div>
         </div>
 
-        <button onClick={downloadImage} className="mt-4 w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded-xl inline-flex items-center justify-center gap-2">
+        <button onClick={downloadImage} className="mt-4 w-full bg-indigo-600 hover:bg-indigo-500 py-2 rounded-xl inline-flex items-center justify-center gap-2 transition-transform duration-150 hover:-translate-y-0.5">
           <Download className="w-4 h-4" /> Download Image
         </button>
       </div>
