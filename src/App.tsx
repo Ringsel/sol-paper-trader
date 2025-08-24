@@ -65,6 +65,7 @@ function loadState(): AppState {
 }
 
 function fmtSOL(n: number) { return `${n.toFixed(4)} SOL`; }
+function fmt4(n: number) { return n.toFixed(4); }
 function fmtNum(n: number) { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(n); }
 function isFinitePos(n: any) { return typeof n === "number" && isFinite(n) && n > 0; }
 
@@ -574,6 +575,15 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: 
   const hasCurrent = isFinite(entry.currentMarketCap ?? NaN);
   const curMcap = hasCurrent ? (entry.currentMarketCap as number) : entry.entryMarketCap;
   const changePct = ((curMcap - entry.entryMarketCap) / entry.entryMarketCap) * 100;
+   // Value-based view for Open Invested
+  const baseSOL = entry.solInvested; // base units
+  const multiplierNow = curMcap / entry.entryMarketCap;
+  const valueNowSOL = baseSOL * multiplierNow;        // what you can sell NOW (in SOL)
+  const deltaAbsSOL = valueNowSOL - baseSOL;          // absolute change in SOL
+  const deltaPct = (multiplierNow - 1) * 100;         // % change since entry
+  const deltaClr = deltaAbsSOL >= 0 ? "text-green-400" : "text-red-400";
+  const signAbs = deltaAbsSOL >= 0 ? "+" : "";        // show + for positive
+  const signPct = deltaPct >= 0 ? "+" : "";
   const changeColor = changePct > 0 ? "text-green-400" : changePct < 0 ? "text-red-400" : "text-slate-300";
 
   return (
@@ -606,7 +616,17 @@ function EntryCard({ entry, onEdit, onSell, onPreview, onBuyMore, onEditMcap }: 
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
         <KV label="Avg Entry Mcap" value={fmtNum(entry.entryMarketCap)} />
-        <KV label="Open Invested" value={fmtSOL(entry.solInvested * (( (isFinite(entry.currentMarketCap ?? NaN) ? (entry.currentMarketCap as number) : entry.entryMarketCap) ) / entry.entryMarketCap))} />
+        <KV
+  label="Open Invested"
+  value={
+    <span>
+      {fmt4(valueNowSOL)}{" "}
+      <span className={deltaClr}>
+        ({signAbs}{fmt4(Math.abs(deltaAbsSOL))}) ({signPct}{deltaPct.toFixed(2)}%)
+      </span>
+    </span>
+  }
+/>
         {sold ? (
           <>
             <KV label="Last Sell Mcap" value={fmtNum(entry.sellMarketCap ?? 0)} />
