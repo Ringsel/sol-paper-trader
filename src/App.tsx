@@ -256,7 +256,7 @@ export default function App() {
   // ── Forms state ───────────────────────────────────────────────────────────
   const [formNew, setFormNew] = useState({ name: "", entryMarketCap: "", solInvested: "" });
   const [formEdit, setFormEdit] = useState({ name: "", entryMarketCap: "", solInvested: "" });
-  const [formSell, setFormSell] = useState({ sellMarketCap: "", sellAmount: "" });
+  const [formSell, setFormSell] = useState({ sellMarketCap: "", sellAmountValue: "" });
   const [formBuyMore, setFormBuyMore] = useState({ currentMcap: "", buyAmount: "" });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -329,7 +329,10 @@ export default function App() {
                 key={e.id}
                 entry={e}
                 onEdit={() => { setEditingId(e.id); setFormEdit({ name: e.name, entryMarketCap: String(e.entryMarketCap), solInvested: String(e.solInvested), }); }}
-                onSell={() => { setSellingId(e.id); setFormSell({ sellMarketCap: e.currentMarketCap ? String(e.currentMarketCap) : e.sellMarketCap ? String(e.sellMarketCap) : "", sellAmount: "" }); }}
+                onSell={() => {
+  setSellingId(e.id);
+  setFormSell({ sellMarketCap: e.currentMarketCap ? String(e.currentMarketCap) : "", sellAmountValue: "" });
+}}
                 onBuyMore={() => { setBuyMoreId(e.id); setFormBuyMore({ currentMcap: e.currentMarketCap ? String(e.currentMarketCap) : "", buyAmount: "" }); }}
                 onPreview={() => setPreviewEntry(e)}
                 onEditMcap={() => { setMcapEditId(e.id); setMcapEditValue(String(e.currentMarketCap ?? e.entryMarketCap)); }}
@@ -408,40 +411,83 @@ export default function App() {
         </Modal>
       )}
 
-      {sellingId && (() => {
-        const entry = state.entries.find(e => e.id === sellingId)!;
-        return (
-          <Modal onClose={() => setSellingId(null)} title={`Sell (Partial OK) #${sellingId}`}>
-            <div className="space-y-4">
-              <label className="block">
-                <span className="text-sm text-slate-300">Current Market Cap</span>
-                <input inputMode="decimal" className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 40000" value={formSell.sellMarketCap} onChange={(e) => setFormSell({ ...formSell, sellMarketCap: e.target.value })} />
-              </label>
-              <label className="block">
-                <span className="text-sm text-slate-300">Sell Amount (SOL)</span>
-                <input inputMode="decimal" className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder={`max ${entry.solInvested.toFixed(4)}`} value={formSell.sellAmount} onChange={(e) => setFormSell({ ...formSell, sellAmount: e.target.value })} />
-                <div className="text-xs text-slate-400 mt-1">Max: {entry.solInvested.toFixed(4)} SOL</div>
-              </label>
-              {/* Preview sell return */}
-              <SellPreview entry={entry} mcap={Number(formSell.sellMarketCap)} amount={Number(formSell.sellAmount)} />
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button onClick={() => setFormSell(fs => ({ ...fs, sellAmount: String(entry.solInvested) }))} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5" title="Auto-fill full amount">Sell All</button>
-                <button onClick={() => setSellingId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">Cancel</button>
-                <button onClick={() => {
-                  const m = Number(formSell.sellMarketCap); const a = Number(formSell.sellAmount);
-                  if (!isFinitePos(m)) return alert("Market cap must be a positive number.");
-                  if (!isFinitePos(a)) return alert("Sell amount must be a positive number.");
-                  // also update the card's current mcap display
-                  updateCurrentMcap(sellingId!, m);
-                  partialSell(sellingId!, m, a);
-                }} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium">
-                  <Save className="w-4 h-4" /> Confirm Sell
-                </button>
-              </div>
-            </div>
-          </Modal>
-        );
-      })()}
+{sellingId && (() => {
+  const entry = state.entries.find(e => e.id === sellingId)!;
+  const mcapNum = Number(formSell.sellMarketCap);
+  const multiplier = isFinite(mcapNum) && mcapNum > 0 ? mcapNum / entry.entryMarketCap : 0;
+  const currentValue = multiplier ? entry.solInvested * multiplier : 0;
+
+  return (
+    <Modal onClose={() => setSellingId(null)} title={`Sell (Value-Based) #${sellingId}`}>
+      <div className="space-y-4">
+        <label className="block">
+          <span className="text-sm text-slate-300">Current New Market Cap</span>
+          <input
+            inputMode="decimal"
+            className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="e.g., 40000"
+            value={formSell.sellMarketCap}
+            onChange={(e) => setFormSell({ ...formSell, sellMarketCap: e.target.value })}
+          />
+        </label>
+
+        {multiplier > 0 && (
+          <div className="text-sm text-slate-300">
+            Your Position: <span className="font-semibold">{fmtSOL(entry.solInvested)}</span> →
+            <span className="font-semibold"> {fmtSOL(currentValue)}</span>
+          </div>
+        )}
+
+        <label className="block">
+          <span className="text-sm text-slate-300">Amount to sell (in SOL at current mcap)</span>
+          <input
+            inputMode="decimal"
+            className="mt-1 w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder={multiplier > 0 ? `max ${currentValue.toFixed(4)}` : "enter market cap first"}
+            value={formSell.sellAmountValue}
+            onChange={(e) => setFormSell({ ...formSell, sellAmountValue: e.target.value })}
+            disabled={!(multiplier > 0)}
+          />
+          {multiplier > 0 && (
+            <div className="text-xs text-slate-400 mt-1">Max: {currentValue.toFixed(4)} SOL</div>
+          )}
+        </label>
+
+        <SellPreview entry={entry} mcap={mcapNum} amountValue={Number(formSell.sellAmountValue)} />
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            onClick={() => multiplier > 0 && setFormSell(fs => ({ ...fs, sellAmountValue: String(currentValue) }))}
+            className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"
+            title="Auto-fill full value"
+            disabled={!(multiplier > 0)}
+          >
+            Sell All
+          </button>
+          <button onClick={() => setSellingId(null)} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5">
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              const m = Number(formSell.sellMarketCap);
+              const val = Number(formSell.sellAmountValue);
+              if (!isFinite(m) || m <= 0) return alert("Market cap must be a positive number.");
+              if (!isFinite(val) || val <= 0) return alert("Sell amount must be a positive number.");
+              const mult = m / entry.entryMarketCap;
+              const baseToSell = val / mult; // convert value-SOL back to base SOL
+              if (baseToSell > entry.solInvested + 1e-12) return alert("Sell amount exceeds position.");
+              updateCurrentMcap(sellingId!, m);
+              partialSell(sellingId!, m, baseToSell);
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 transition-transform duration-150 hover:-translate-y-0.5 font-medium"
+          >
+            <Save className="w-4 h-4" /> Confirm Sell
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+})()}
 
       {balanceModalOpen && (
         <Modal onClose={() => setBalanceModalOpen(false)} title="Adjust Balance">
@@ -666,15 +712,34 @@ function AvgPreview({ entry, mcap, amount }: { entry: Entry; mcap: number; amoun
   );
 }
 
-function SellPreview({ entry, mcap, amount }: { entry: Entry; mcap: number; amount: number }) {
-  if (!isFinite(mcap) || !isFinite(amount) || amount <= 0) return null;
-  if (amount > entry.solInvested) return <div className="text-sm text-red-400">Sell amount exceeds open invested.</div>;
+function SellPreview({ entry, mcap, amountValue }: { entry: Entry; mcap: number; amountValue: number }) {
+  if (!isFinite(mcap) || mcap <= 0) return null;
   const multiplier = mcap / entry.entryMarketCap;
-  const returned = amount * multiplier;
-  const pnl = returned - amount;
+  const currentValue = entry.solInvested * multiplier; // value SOL at current mcap
+
+  if (!isFinite(amountValue) || amountValue <= 0) {
+    return (
+      <div className="text-sm text-slate-300">
+        Current position value: <span className="font-semibold">{fmtSOL(currentValue)}</span>
+      </div>
+    );
+  }
+
+  if (amountValue > currentValue + 1e-12)
+    return <div className="text-sm text-red-400">Sell amount exceeds current position value.</div>;
+
+  const baseToSell = amountValue / multiplier; // convert value-SOL back to base SOL
+  const returned = amountValue;                 // you receive value SOL
+  const pnl = returned - baseToSell;
+  const leftValue = currentValue - amountValue;
   const color = pnl >= 0 ? "text-green-400" : "text-red-400";
+
   return (
-    <div className="text-sm text-slate-300">Projected Return: <span className="font-semibold">{fmtSOL(returned)}</span> • P/L: <span className={`font-semibold ${color}`}>{fmtSOL(pnl)}</span></div>
+    <div className="text-sm text-slate-300 space-y-1">
+      <div>Current position value: <span className="font-semibold">{fmtSOL(currentValue)}</span></div>
+      <div>Base to sell: <span className="font-semibold">{fmtSOL(baseToSell)}</span> • Return: <span className="font-semibold">{fmtSOL(returned)}</span> • P/L: <span className={`font-semibold ${color}`}>{fmtSOL(pnl)}</span></div>
+      <div>You will be left with: <span className="font-semibold">{fmtSOL(leftValue)}</span></div>
+    </div>
   );
 }
 
