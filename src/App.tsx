@@ -65,7 +65,6 @@ function loadState(): AppState {
 }
 
 function fmtSOL(n: number) { return `${n.toFixed(4)} SOL`; }
-function fmt4(n: number) { return n.toFixed(4); }
 function fmtNum(n: number) { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 }).format(n); }
 function isFinitePos(n: any) { return typeof n === "number" && isFinite(n) && n > 0; }
 
