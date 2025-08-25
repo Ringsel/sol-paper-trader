@@ -10,12 +10,27 @@ import {
   DollarSign,
   ExternalLink,
   Download,
+  LineChart,     // 👈 add
+  PlusCircle,    // 👈 add
+  Trash2,        // 👈 add
 } from "lucide-react";
 import html2canvas from "html2canvas";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────────────────────
+
+type HistoryPoint = { t: number; balance: number; openValue: number };
+
+type AppState = {
+  startingBalance: number | null;
+  balance: number;
+  entries: Entry[];
+  nextId: number;
+  history?: HistoryPoint[];          // 👈 new
+};
+
+const STORAGE_KEY = "sol-paper-trading-state-v2"; // 👈 bump key
 
 type Entry = {
   id: string;
@@ -37,14 +52,6 @@ type Entry = {
   soldAt?: string;
 };
 
-type AppState = {
-  startingBalance: number | null;
-  balance: number;
-  entries: Entry[];
-  nextId: number;
-};
-
-const STORAGE_KEY = "sol-paper-trading-state-v1";
 
 function saveState(state: AppState) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
@@ -53,14 +60,22 @@ function saveState(state: AppState) {
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+    if (!raw) return { startingBalance: null, balance: 0, entries: [], nextId: 1, history: [] };
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed.balance !== "number" || !Array.isArray(parsed.entries)) {
-      return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+      return { startingBalance: null, balance: 0, entries: [], nextId: 1, history: [] };
     }
-    return parsed as AppState;
+    if (!Array.isArray(parsed.history)) parsed.history = [];
+    // Ensure required fields
+    return {
+      startingBalance: parsed.startingBalance ?? null,
+      balance: parsed.balance,
+      entries: parsed.entries,
+      nextId: parsed.nextId ?? 1,
+      history: parsed.history,
+    };
   } catch {
-    return { startingBalance: null, balance: 0, entries: [], nextId: 1 };
+    return { startingBalance: null, balance: 0, entries: [], nextId: 1, history: [] };
   }
 }
 
@@ -77,6 +92,7 @@ export default function App() {
   useEffect(() => { saveState(state); }, [state]);
 
   // UI state
+  const [graphOpen, setGraphOpen] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sellingId, setSellingId] = useState<string | null>(null);
@@ -92,6 +108,33 @@ export default function App() {
   const openEntries = useMemo(() => state.entries.filter(e => e.status === "open"), [state.entries]);
   const soldEntries = useMemo(() => state.entries.filter(e => e.status === "sold"), [state.entries]);
 
+
+// append a new history point if changed
+function pushHistoryPoint() {
+  setState(s => {
+    const openValue = s.entries
+      .filter(e => e.status === "open")
+      .reduce((sum, e) => {
+        const cur = (e.currentMarketCap ?? e.entryMarketCap);
+        const mult = cur > 0 ? cur / e.entryMarketCap : 1;
+        return sum + e.solInvested * mult;
+      }, 0);
+
+    const h = s.history ?? [];
+    const last = h[h.length - 1];
+    const point: HistoryPoint = { t: Date.now(), balance: s.balance, openValue };
+    if (last && Math.abs(last.balance - point.balance) < 1e-9 && Math.abs(last.openValue - point.openValue) < 1e-9) {
+      return s; // no change
+    }
+    return { ...s, history: [...h, point] };
+  });
+}
+
+// on first mount or when balance/open changes, push a point
+useEffect(() => {
+  if (state.startingBalance !== null) pushHistoryPoint();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [state.balance, state.entries]); // runs after buys/sells/mcap edits
   const totals = useMemo(() => {
     const investedOpen = openEntries.reduce((s, e) => {
       const cur = (e.currentMarketCap ?? e.entryMarketCap);
@@ -110,6 +153,15 @@ export default function App() {
     const winRate = closed > 0 ? (wins / closed) * 100 : 0;
     return { closed, wins, losses, winRate };
   }, [soldEntries]);
+
+  const avgReturns = useMemo(() => {
+  if (soldEntries.length === 0) return { avgPct: 0, avgAbs: 0 };
+  const pctList = soldEntries.map(e => e.pnlPercent ?? 0);
+  const absList = soldEntries.map(e => e.pnl ?? 0);
+  const avgPct = pctList.reduce((a, b) => a + b, 0) / pctList.length;
+  const avgAbs = absList.reduce((a, b) => a + b, 0) / absList.length;
+  return { avgPct, avgAbs };
+}, [soldEntries]);
 
   // Entries to render (with hide old toggle)
   const entriesForList = useMemo(() => {
@@ -301,6 +353,11 @@ export default function App() {
             <SummaryCard label="Open Invested" value={fmtSOL(totals.investedOpen)} icon={<DollarSign className="w-4 h-4" />} />
             <SummaryCard label="Realized P/L" value={fmtSOL(totals.realized)} icon={<DollarSign className="w-4 h-4" />} />
             <SummaryCard label="Win Rate" value={`${winStats.winRate.toFixed(1)}% (${winStats.wins}/${winStats.closed})`} icon={<DollarSign className="w-4 h-4" />} />
+            <SummaryCard
+  label="Avg Returns (closed)"
+  value={`${avgReturns.avgPct.toFixed(2)}% • ${fmtSOL(avgReturns.avgAbs)}`}
+  icon={<DollarSign className="w-4 h-4" />}
+/>
           </div>
         </div>
 
@@ -312,6 +369,13 @@ export default function App() {
           <button onClick={() => setConfirmReset(true)} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 transition-transform duration-150 hover:-translate-y-0.5 border border-slate-700 text-slate-200">
             <RotateCcw className="w-4 h-4" /> Reset
           </button>
+          <button
+  onClick={() => setGraphOpen(true)}
+  className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-800 border border-slate-700 transition-transform duration-150 hover:-translate-y-0.5"
+  title="Show Balance + Open Value graph"
+>
+  <LineChart className="w-4 h-4" /> Graph
+</button>
           <button onClick={() => setShowActiveOnly(v => !v)} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border transition-transform duration-150 hover:-translate-y-0.5  " style={{ borderColor: showActiveOnly ? "#22c55e" : "#334155", background: showActiveOnly ? "#052e16" : "#0f172a" }}>
             {showActiveOnly ? "Showing Active Only" : "Show Active Only"}
           </button>
@@ -343,6 +407,22 @@ export default function App() {
       </div>
 
       {/* Modals */}
+
+      {graphOpen && (
+  <GraphModal
+    onClose={() => setGraphOpen(false)}
+    series={state.history ?? []}
+    onAddPoint={() => pushHistoryPoint()}
+    onReset={() => setState(s => ({ ...s, history: [] }))}
+  />
+)}
+
+{showNew && (
+  <Modal onClose={() => setShowNew(false)} title="New Entry (Buy)">
+    ...
+  </Modal>
+)}
+
       {showNew && (
         <Modal onClose={() => setShowNew(false)} title="New Entry (Buy)">
           <EntryForm
@@ -553,6 +633,147 @@ export default function App() {
 // ────────────────────────────────────────────────────────────────────────────────
 // UI Bits
 // ────────────────────────────────────────────────────────────────────────────────
+
+function GraphModal({
+  onClose,
+  series,
+  onAddPoint,
+  onReset,
+}: {
+  onClose: () => void;
+  series: HistoryPoint[];
+  onAddPoint: () => void;
+  onReset: () => void;
+}) {
+  const w = 680, h = 260, pad = 28;
+
+  if (!series || series.length === 0) {
+    return (
+      <Modal title="Balance & Open Value" onClose={onClose}>
+        <div className="text-slate-300">No data yet. Make a trade or click “Add point now”.</div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onAddPoint} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 hover:-translate-y-0.5 transition">
+            <PlusCircle className="w-4 h-4" /> Add point now
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
+  const tmin = series[0].t;
+  const tmax = series[series.length - 1].t || series[0].t + 1;
+  const vmin = Math.min(...series.flatMap(p => [p.balance, p.openValue]));
+  const vmax = Math.max(...series.flatMap(p => [p.balance, p.openValue]));
+  const x = (t: number) => pad + ((t - tmin) / (tmax - tmin || 1)) * (w - 2 * pad);
+  const y = (v: number) => h - pad - ((v - vmin) / (vmax - vmin || 1)) * (h - 2 * pad);
+  const path = (vals: (p: HistoryPoint) => number) =>
+    series.map((p, i) => `${i ? "L" : "M"} ${x(p.t)} ${y(vals(p))}`).join(" ");
+
+  return (
+    <Modal title="Balance & Open Value" onClose={onClose}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs text-slate-400">
+          Points: <span className="text-slate-200 font-medium">{series.length}</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onAddPoint}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 hover:-translate-y-0.5 transition"
+            title="Append a snapshot now"
+          >
+            <PlusCircle className="w-4 h-4" /> Add point now
+          </button>
+          <button
+            onClick={onReset}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 hover:bg-red-500 transition"
+            title="Clear graph series"
+          >
+            <Trash2 className="w-4 h-4" /> Reset series
+          </button>
+        </div>
+      </div>
+
+      <div className="w-full overflow-x-auto">
+        <svg width={w} height={h} className="rounded-xl border border-slate-800 bg-slate-950">
+        <div className="mt-3 text-xs text-slate-400 flex gap-6 justify-center">
+  <div className="flex items-center gap-2">
+    <span className="inline-block w-3 h-3 rounded" style={{ background: "#60a5fa" }} />
+    Balance
+  </div>
+  <div className="flex items-center gap-2">
+    <span className="inline-block w-3 h-3 rounded" style={{ background: "#34d399" }} />
+    Open Value
+  </div>
+</div>
+        {/* axes */}
+<line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke="#334155" strokeWidth="1" />
+<line x1={pad} y1={pad} x2={pad} y2={h - pad} stroke="#334155" strokeWidth="1" />
+
+{/* X-axis ticks (time) */}
+{series.map((p, i) => (
+  i % Math.ceil(series.length / 5) === 0 && (
+    <text
+      key={`xtick-${i}`}
+      x={x(p.t)}
+      y={h - pad + 15}
+      fontSize="10"
+      fill="#94a3b8"
+      textAnchor="middle"
+    >
+      {new Date(p.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+    </text>
+  )
+))}
+
+{/* Y-axis ticks (values) */}
+{[0, 0.25, 0.5, 0.75, 1].map((frac, i) => {
+  const val = vmin + (vmax - vmin) * frac;
+  return (
+    <g key={`ytick-${i}`}>
+      <line
+        x1={pad - 4}
+        y1={y(val)}
+        x2={pad}
+        y2={y(val)}
+        stroke="#334155"
+        strokeWidth="1"
+      />
+      <text
+        x={pad - 6}
+        y={y(val) + 3}
+        fontSize="10"
+        fill="#94a3b8"
+        textAnchor="end"
+      >
+        {val.toFixed(2)}
+      </text>
+    </g>
+  );
+})}
+          {/* axes */}
+          <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke="#334155" strokeWidth="1" />
+          <line x1={pad} y1={pad} x2={pad} y2={h - pad} stroke="#334155" strokeWidth="1" />
+          {/* lines */}
+          <path d={path(p => p.balance)} fill="none" stroke="#60a5fa" strokeWidth="2" />
+          <path d={path(p => p.openValue)} fill="none" stroke="#34d399" strokeWidth="2" />
+          {/* last dots */}
+          {series.length > 0 && (
+            <>
+              <circle cx={x(series[series.length - 1].t)} cy={y(series[series.length - 1].balance)} r="3" fill="#60a5fa" />
+              <circle cx={x(series[series.length - 1].t)} cy={y(series[series.length - 1].openValue)} r="3" fill="#34d399" />
+            </>
+          )}
+        </svg>
+      </div>
+
+      <div className="mt-3 text-xs text-slate-400 flex gap-4">
+        <div className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded" style={{ background: "#60a5fa" }} /> Balance</div>
+        <div className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded" style={{ background: "#34d399" }} /> Open Value</div>
+      </div>
+    </Modal>
+  );
+}
+
 
 function SummaryCard({ label, value, icon, clickable, onClick }: { label: string; value: string; icon: React.ReactNode; clickable?: boolean; onClick?: () => void }) {
   const cls = "px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-sm flex items-center gap-2 " + (clickable ? "cursor-pointer transition-transform duration-150 hover:-translate-y-0.5 hover:brightness-110" : "");
